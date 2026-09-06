@@ -894,10 +894,14 @@ async function initMapOnce() {
   let dupCount = 0;
   restrictedRegionIds = new Set();
   for (const f of geo.features) {
-    const id = regionIdOf(f);
-    regionNames[id] = JP_PREFECTURE_NAME_JA[id] || regionNameOf(f);
-    if (seenIds[id]) dupCount++;
-    seenIds[id] = true;
+    const baseId = regionIdOf(f);
+    const occurrence = (seenIds[baseId] = (seenIds[baseId] || 0) + 1);
+    // 同じIDが複数区画にまたがる場合は、2件目以降に連番を振って別区画として扱えるようにする
+    // (1件目は元のIDのまま。既存の主張データとの互換性を保つため)
+    const id = occurrence === 1 ? baseId : `${baseId}__${occurrence}`;
+    f.__mapId = id;
+    if (occurrence > 1) dupCount++;
+    regionNames[id] = JP_PREFECTURE_NAME_JA[id] || JP_PREFECTURE_NAME_JA[baseId] || regionNameOf(f);
 
     if (!isAntarcticaFeature(f)) {
       const areaKm2 = d3.geoArea(f) / (4 * Math.PI) * EARTH_SURFACE_KM2;
@@ -915,7 +919,7 @@ async function initMapOnce() {
     }
   }
   if (dupCount > 0) {
-    window.__diag("同じIDを持つ区画が" + dupCount + "件あります(地図データの重複。詳細は運営のみ表示のログには出しません)。");
+    window.__diag("同じIDを持つ区画が" + dupCount + "件ありましたが、別区画として扱えるよう自動でIDを振り直しました。");
   }
   if (restrictedRegionIds.size > 0) {
     window.__diag("大陸規模のため主張禁止に設定した区画: " + restrictedRegionIds.size + "件(南極は例外的に主張可能です)");
@@ -938,12 +942,12 @@ async function initMapOnce() {
     .enter()
     .append("path")
     .attr("d", path)
-    .attr("data-region-id", (d) => regionIdOf(d))
-    .classed("is-restricted", (d) => restrictedRegionIds.has(regionIdOf(d)));
+    .attr("data-region-id", (d) => uniqueRegionId(d))
+    .classed("is-restricted", (d) => restrictedRegionIds.has(uniqueRegionId(d)));
 
   pathIndex = new Map();
   pathSelection.each(function(d){
-    const id = regionIdOf(d);
+    const id = uniqueRegionId(d);
     if (!pathIndex.has(id)) pathIndex.set(id, []);
     pathIndex.get(id).push(this);
   });
@@ -982,6 +986,10 @@ async function initMapOnce() {
 
 function regionIdOf(f){
   return String(f.id ?? f.properties.id ?? f.properties.iso_3166_2 ?? f.properties.name);
+}
+function uniqueRegionId(f){
+  // 地図読み込み時に振り直した一意なIDがあればそれを使う(重複ID対策)。無ければ元のIDにフォールバック
+  return f.__mapId || regionIdOf(f);
 }
 function regionNameOf(f){ return f.properties.name || regionIdOf(f); }
 function countryKeyOf(f){
