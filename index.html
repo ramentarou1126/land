@@ -689,7 +689,7 @@ let claimsCache = {};
 let pathSelection = null;
 let zoomBehavior = null;
 let mapSvgSelection = null;
-let pathIndex = new Map(); // regionId -> path DOMノード(差分更新用)
+let pathIndex = new Map(); // regionId -> path DOMノードの配列(同じIDが複数区画にまたがる場合があるため配列で持つ)
 let mapInitialized = false;
 let isAdmin = false;
 let adminOnlyMode = false;
@@ -942,7 +942,11 @@ async function initMapOnce() {
     .classed("is-restricted", (d) => restrictedRegionIds.has(regionIdOf(d)));
 
   pathIndex = new Map();
-  pathSelection.each(function(d){ pathIndex.set(regionIdOf(d), this); });
+  pathSelection.each(function(d){
+    const id = regionIdOf(d);
+    if (!pathIndex.has(id)) pathIndex.set(id, []);
+    pathIndex.get(id).push(this);
+  });
 
   // 区画数が多いため、1つずつにイベントを付けず地図全体に1つだけ委譲して負荷を下げる
   let lastTooltipMove = 0;
@@ -1117,12 +1121,14 @@ function zoomToRegions(regionIds){
   if (!zoomBehavior || !mapSvgSelection || !regionIds || regionIds.length === 0) return;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, found = false;
   for (const id of regionIds) {
-    const node = pathIndex.get(id);
-    if (!node) continue;
-    const b = node.getBBox();
-    minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
-    maxX = Math.max(maxX, b.x + b.width); maxY = Math.max(maxY, b.y + b.height);
-    found = true;
+    const nodes = pathIndex.get(id);
+    if (!nodes) continue;
+    for (const node of nodes) {
+      const b = node.getBBox();
+      minX = Math.min(minX, b.x); minY = Math.min(minY, b.y);
+      maxX = Math.max(maxX, b.x + b.width); maxY = Math.max(maxY, b.y + b.height);
+      found = true;
+    }
   }
   if (!found) return;
   const svgNode = mapSvgSelection.node();
@@ -1138,29 +1144,31 @@ function applyClaimColors(ids){
   if (!pathSelection) return;
   const targetIds = ids || pathIndex.keys();
   for (const id of targetIds) {
-    const node = pathIndex.get(id);
-    if (!node) continue;
-    const sel = d3.select(node);
+    const nodes = pathIndex.get(id);
+    if (!nodes) continue;
     const claimants = restrictedRegionIds.has(id) ? [] : claimantList(id);
 
-    if (claimants.length === 0) {
-      sel.style("fill", null).style("stroke", null).style("stroke-width", null);
-    } else if (claimants.length === 1) {
-      const color = claimants[0].color;
-      sel.style("fill", color);
-      const c = d3.color(color);
-      sel.style("stroke", c ? c.darker(0.6) : color).style("stroke-width", null);
-    } else {
-      const colors = claimants.map((c) => c.color);
-      const patternId = ensureStripePattern(colors);
-      sel.style("fill", `url(#${patternId})`);
-      sel.style("stroke", "rgba(20,50,90,0.75)").style("stroke-width", 0.7);
-    }
+    for (const node of nodes) {
+      const sel = d3.select(node);
+      if (claimants.length === 0) {
+        sel.style("fill", null).style("stroke", null).style("stroke-width", null);
+      } else if (claimants.length === 1) {
+        const color = claimants[0].color;
+        sel.style("fill", color);
+        const c = d3.color(color);
+        sel.style("stroke", c ? c.darker(0.6) : color).style("stroke-width", null);
+      } else {
+        const colors = claimants.map((c) => c.color);
+        const patternId = ensureStripePattern(colors);
+        sel.style("fill", `url(#${patternId})`);
+        sel.style("stroke", "rgba(20,50,90,0.75)").style("stroke-width", 0.7);
+      }
 
-    sel.classed("is-claimed", claimants.length > 0);
-    sel.classed("is-contested", claimants.length > 1);
-    sel.classed("is-highlighted", !!(highlightedUid && claimants.some((c) => c.uid === highlightedUid)));
-    sel.classed("is-dimmed", !!(highlightedUid && claimants.length > 0 && !claimants.some((c) => c.uid === highlightedUid)));
+      sel.classed("is-claimed", claimants.length > 0);
+      sel.classed("is-contested", claimants.length > 1);
+      sel.classed("is-highlighted", !!(highlightedUid && claimants.some((c) => c.uid === highlightedUid)));
+      sel.classed("is-dimmed", !!(highlightedUid && claimants.length > 0 && !claimants.some((c) => c.uid === highlightedUid)));
+    }
   }
 }
 
